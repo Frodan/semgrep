@@ -603,23 +603,24 @@ let rec map_for_statement env v =
 and map_variable_declaration_statement (env : env)
     ((v1, v2, v3, v4) : CST.variable_declaration_statement) =
   let basic_ty = (* "var" *) G.ty_builtin (str env v1) in
-  let declarations = 
-    (map_variable_declaration env v2 basic_ty) ::
+  let id, e, arr_ty = map_variable_declaration env v2 basic_ty in
+  let v3TODO =
     List_.map
-      (fun (_, v2) -> map_variable_declaration env v2 basic_ty)
+      (fun (v1, v2) ->
+        let _v1 = (* "," *) token env v1 in
+        let v2 = map_variable_declaration env v2 basic_ty in
+        v2)
       v3
   in
+  let ty = 
+    match arr_ty with
+    | None -> basic_ty
+    | Some x -> x
+  in
   let sc = (* ";" *) token env v4 in
-  List.map (fun (id, e, arr_ty) ->
-    let ty = 
-      match arr_ty with
-      | None -> basic_ty
-      | Some x -> x
-    in
-    let ent = G.basic_entity id in
-    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
-    (ent, def)
-  ) declarations
+  let ent = G.basic_entity id in
+  let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+  (ent, def)
 
 and map_signal_declaration_statement (env : env)
     ((v1, v2, v3, v4, v5, v6) : CST.signal_declaration_statement) =
@@ -630,29 +631,31 @@ and map_signal_declaration_statement (env : env)
     | None -> []
   in
   let type_name = H2.name_of_ids (signal :: visibility) in
-  let basic_ty = G.TyN type_name |> G.t in
+  let basic_ty = G.TyN type_name |> G.t
+  in
   let tags_TODO =
     match v3 with
     | Some x -> Some (map_signal_tags env x)
     | None -> None
   in
-  let declarations = 
-    (map_signal_declaration env v4 basic_ty) ::
+  let id, e, arr_ty = map_signal_declaration env v4 basic_ty in
+  let ty = 
+    match arr_ty with
+    | None -> basic_ty
+    | Some x -> x
+  in
+  let v5TODO =
     List_.map
-      (fun (_, v2) -> map_signal_declaration env v2 basic_ty)
+      (fun (v1, v2) ->
+        let _v1 = (* "," *) token env v1 in
+        let v2 = map_signal_declaration env v2 basic_ty in
+        v2)
       v5
   in
   let sc = (* ";" *) token env v6 in
-  List.map (fun (id, e, arr_ty) ->
-    let ty = 
-      match arr_ty with
-      | None -> basic_ty
-      | Some x -> x
-    in
-    let ent = G.basic_entity id in
-    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
-    (ent, def)
-  ) declarations
+  let ent = G.basic_entity id in
+  let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+  (ent, def)
 
 and map_signal_declaration (env : env) ((v1, v2, v3) : CST.signal_declaration) (ty: type_) =
   let id =
@@ -682,23 +685,24 @@ and map_signal_declaration (env : env) ((v1, v2, v3) : CST.signal_declaration) (
 and map_component_declaration_statement (env : env)
     ((v1, v2, v3, v4) : CST.component_declaration_statement) =
   let basic_ty = (* "component" *) G.ty_builtin (str env v1) in
-  let declarations = 
-    (map_component_declaration env v2 basic_ty) ::
+  let id, e, arr_ty = map_component_declaration env v2 basic_ty in
+  let ty = 
+    match arr_ty with
+    | None -> basic_ty
+    | Some x -> x
+  in
+  let v3TODO =
     List_.map
-      (fun (_, v2) -> map_component_declaration env v2 basic_ty)
+      (fun (v1, v2) ->
+        let _v1 = (* "," *) token env v1 in
+        let v2 = map_component_declaration env v2 basic_ty in
+        v2)
       v3
   in
   let sc = (* ";" *) token env v4 in
-  List.map (fun (id, e, arr_ty) ->
-    let ty = 
-      match arr_ty with
-      | None -> basic_ty
-      | Some x -> x
-    in
-    let ent = G.basic_entity id in
-    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
-    (ent, def)
-  ) declarations
+  let ent = G.basic_entity id in
+  let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+  (ent, def)
 
 and map_component_ellipsis (env : env) (x : CST.anon_choice_ellips_51e2204) =
   match x with
@@ -778,17 +782,17 @@ and map_statement (env : env) (x : CST.statement) =
       let st = map_statement env v5 in
       While (twhile, Cond cond, st) |> G.s
   | `Var_decl_stmt x ->
-      let defs = map_variable_declaration_statement env x in
-      G.ss (List.map (fun (ent, vdef) -> DefStmt (ent, VarDef vdef) |> G.s) defs)
+      let ent, vdef = map_variable_declaration_statement env x in
+      DefStmt (ent, VarDef vdef) |> G.s
   | `Exp_stmt x ->
       let e, sc = map_expression_statement env x in
       ExprStmt (e, sc) |> G.s
   | `Signal_decl_stmt x -> 
-      let defs = map_signal_declaration_statement env x in
-      G.ss (List.map (fun (ent, vdef) -> DefStmt (ent, VarDef vdef) |> G.s) defs)
+      let ent, vdef = map_signal_declaration_statement env x in
+      DefStmt (ent, VarDef vdef) |> G.s
   | `Comp_decl_stmt x -> 
-      let defs = map_component_declaration_statement env x in
-      G.ss (List.map (fun (ent, vdef) -> DefStmt (ent, VarDef vdef) |> G.s) defs)
+      let ent, vdef = map_component_declaration_statement env x in
+      DefStmt (ent, VarDef vdef) |> G.s
 
 let map_function_body (env : env) ((v1, v2, v3) : CST.function_body) :
     function_body =
