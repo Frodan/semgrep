@@ -31,19 +31,15 @@ let _fb = Tok.unsafe_fake_bracket
 let left_strip_space (s, t) =
   if s =~ "^ +\\(.*\\)$" then (Common.matched1 s, t) else (s, t)
 
-let map_signal_visability (env : env) (x : CST.signal_visability) =
+let map_signal_visibility (env : env) (x : CST.signal_visibility) =
   match x with
   | `Input tok -> (* "input" *) [ str env tok ]
   | `Output tok -> (* "output" *) [ str env tok ]
-(* TODO
-   | `Input tok -> (* "input" *) G.OtherAttribute (str env tok, [])
-   | `Output tok -> (* "output" *) G.OtherAttribute (str env tok, [])
-*)
 
 let map_identifier (env : env) (tok : CST.identifier) =
   (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok
 
-let map_int_ (env : env) (tok : CST.int_) = (* pattern \d+ *) str env tok
+let map_int_literal (env : env) (tok : CST.int_literal) = (* pattern \d+ *) str env tok
 
 let map_escape_sequence (env : env) (tok : CST.escape_sequence) =
   (* escape_sequence *) token env tok
@@ -151,17 +147,12 @@ let map_parameter (env : env) (x : CST.parameter) =
       G.Param param
   | `Ellips tok -> ParamEllipsis ((* "..." *) token env tok)
 
-let map_trailing_comma env v =
-  match v with
-  | Some tok -> (* "," *) token env tok |> ignore
-  | None -> ()
-
 let map_parameter_list (env : env) ((v1, v2, v3) : CST.parameter_list) :
     parameters =
   let lp = (* "(" *) token env v1 in
   let params =
     match v2 with
-    | Some (v1, v2, v3) ->
+    | Some (v1, v2) ->
         let v1 = map_parameter env v1 in
         let v2 =
           List_.map
@@ -170,9 +161,7 @@ let map_parameter_list (env : env) ((v1, v2, v3) : CST.parameter_list) :
               let v2 = map_parameter env v2 in
               v2)
             v2
-        in
-        let _v3 = map_trailing_comma env v3 in
-        v1 :: v2
+        in v1 :: v2
     | None -> []
   in
   let rp = (* ")" *) token env v3 in
@@ -362,7 +351,7 @@ and map_parenthesized_expression (env : env)
   (* alt: ParenExpr (lp, e, rp) |> G.e *)
   e
 
-and map_tuple (env : env) ((v1, v2, v3, v4, v5) : CST.tuple) =
+and map_tuple_expression (env : env) ((v1, v2, v3, v4) : CST.tuple_expression) =
   let lb = (* "(" *) token env v1 in
   let expr = map_expression env v2 in
   let other_exprs =
@@ -373,20 +362,17 @@ and map_tuple (env : env) ((v1, v2, v3, v4, v5) : CST.tuple) =
         other_expr)
       v3
   in
-  let _v4 =
-    match v4 with
-    | Some tok -> Some ((* "," *) token env tok)
-    | None -> None
-  in
-  let rb = (* ")" *) token env v5 in
+  let rb = (* ")" *) token env v4 in
   Container (Tuple, (lb, expr :: other_exprs, rb)) |> G.e
 
 and map_call_expression (env : env)
     ((v1, v2, v3, v4, v5, v6) : CST.call_expression) =
-  let _TODOparallel =
+  let parallel =
     match v1 with
-    | Some tok -> (* "parallel" *) token env tok
-    | None -> fake ""
+    | Some tok -> 
+      Some (let p = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
+      N (H2.name_of_id p) |> G.e |> G.arg)
+    | None -> None
   in
   let call_id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v2 in
   let lb = (* "(" *) token env v3 in
@@ -395,6 +381,7 @@ and map_call_expression (env : env)
     | Some x -> map_argument_list env x
     | None -> []
   in
+  
   let rb = (* ")" *) token env v5 in
   let v6TODO =
     match v6 with
@@ -402,7 +389,13 @@ and map_call_expression (env : env)
     | None -> []
   in
   let id = G.N (G.Id (call_id, G.empty_id_info ())) |> G.e in
-  let args = (lb, arg_list, rb) in
+  let args = 
+    let arguments = match parallel with 
+      | Some p -> p :: arg_list 
+      | None -> arg_list 
+    in
+    (lb, arguments, rb) 
+  in
   G.Call (id, args) |> G.e
 (* G.OtherExpr (("Call", v2), [Tk v2; Tk v1; G.Args v4; G.Args v6 ]) |> G.e *)
 
@@ -428,7 +421,7 @@ and map_anonymous_inputs (env : env) ((v1, v2, v3) : CST.anonymous_inputs) =
   let _rb = (* ")" *) token env v3 in
   args_list
 
-and map_array_ (env : env) ((v1, v2, v3, v4, v5) : CST.array_) =
+and map_array_expression (env : env) ((v1, v2, v3, v4) : CST.array_expression) =
   let lb = (* "[" *) token env v1 in
   let expr1 = map_expression env v2 in
   let items =
@@ -439,12 +432,7 @@ and map_array_ (env : env) ((v1, v2, v3, v4, v5) : CST.array_) =
         v2)
       v3
   in
-  let _v4 =
-    match v4 with
-    | Some tok -> Some ((* "," *) token env tok)
-    | None -> None
-  in
-  let rb = (* "]" *) token env v5 in
+  let rb = (* "]" *) token env v4 in
   G.Container (G.Array, (lb, expr1 :: items, rb)) |> G.e
 
 and map_member_expression (env : env) ((v1, v2, v3) : CST.member_expression) =
@@ -461,9 +449,7 @@ and map_member_expression (env : env) ((v1, v2, v3) : CST.member_expression) =
 
 and map_assignment_expression (env : env)
     ((v1, v2, v3) : CST.assignment_expression) =
-  let le =
-    match v1 with
-    | `Exp x -> map_expression env x
+  let le = map_expression env v1
   in
   let op =
     match v2 with
@@ -491,16 +477,16 @@ and map_assignment_expression (env : env)
 
 and map_expression (env : env) (x : CST.expression) =
   match x with
-  | `Choice_int x -> (
+  | `Choice_id x -> (
       match x with
-      | `Int tok ->
+      | `Int_lit tok ->
           let s, t = str env tok in
           G.L (G.Int (Parsed_int.parse (s, t))) |> G.e
       | `Id tok ->
           let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
           N (H2.name_of_id id) |> G.e
-      | `Array x -> map_array_ env x
-      | `Tuple x -> map_tuple env x
+      | `Array_exp x -> map_array_expression env x
+      | `Tuple_exp x -> map_tuple_expression env x
       | `Un_exp x -> map_unary_expression env x
       | `Bin_exp x -> map_binary_expression env x
       | `Tern_exp x -> map_ternary_expression env x
@@ -532,79 +518,43 @@ let map_signal_tags (env : env) ((v1, v2, v3, v4) : CST.signal_tags) =
   let rb = (* "}" *) token env v4 in
   (lb, tag1 :: other_tags, rb)
 
-let map_type_ (env : env) (x : CST.type_) =
-  match x with
-  | `Signal (v1, v2, v3) ->
-      let signal = (* "signal" *) str env v1 in
-      let visability =
-        match v2 with
-        | Some x -> map_signal_visability env x
-        | None -> []
-      in
-      let _v3TODO =
-        match v3 with
-        | Some x -> Some (map_signal_tags env x)
-        | None -> None
-      in
-      let n = H2.name_of_ids (signal :: visability) in
-      G.TyN n |> G.t
-  | `Var tok ->
-      let x = (* "var" *) str env tok in
-      G.ty_builtin x
-  | `Comp tok ->
-      (* "component" *)
-      let x = (* "var" *) str env tok in
-      G.ty_builtin x
+let map_deep_ellipsis (env : env) ((v1, v2, v3) : CST.deep_ellipsis) =
+  let l = (* "<..." *) token env v1 in
+  let e = map_expression env v2 in
+  let r = (* "...>" *) token env v3 in
+  DeepEllipsis (l, e, r)
 
-let map_array_definition (env : env) (xs : CST.array_definition) ty =
-  List_.map
-    (fun (v1, v2, v3) ->
+let map_array_type (env : env) (xs : CST.array_type) (ty : type_) =
+  List.fold_right
+    (fun (v1, v2, v3) acc_ty ->
       let lb = (* "[" *) token env v1 in
       let eopt = map_expression env v2 in
       let rb = (* "]" *) token env v3 in
-      TyArray ((lb, Some eopt, rb), ty) |> G.t)
+      TyArray ((lb, Some eopt, rb), acc_ty) |> G.t)
     xs
+    ty
 
-let map_variable_initialization (env : env)
-    ((v1, v2, v3, v4, v5) : CST.variable_initialization) ty =
+
+let map_variable_declaration (env : env)
+    ((v1, v2, v3) : CST.variable_declaration) ty =
   let id =
     (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> left_strip_space
   in
-  let v2TODO =
-    List_.map
-      (fun (v1, v2) ->
-        let v1 = (* "," *) token env v1 in
-        let v2 = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) token env v2 in
-        v2)
-      v2
-  in
-  let _v3 =
-    match v3 with
-    | Some tok -> Some ((* "," *) token env tok)
-    | None -> None
-  in
-  let _arrTODO =
-    match v4 with
-    | Some x -> Some (map_array_definition env x ty)
+  let arr_ty =
+    match v2 with
+    | Some x -> Some (map_array_type env x ty)
     | None -> None
   in
   let e =
-    match v5 with
+    match v3 with
     | Some (v1, v2) ->
         Some
-          (let _v1TODO =
-             match v1 with
-             | `EQ tok -> (* "=" *) token env tok
-             | `LTEQEQ tok -> (* "<==" *) token env tok
-             | `EQEQGT tok -> (* "==>" *) token env tok
-             | `LTDASHDASH tok -> (* "<--" *) token env tok
-             | `DASHDASHGT tok -> (* "-->" *) token env tok
-           in
+          (let v1 = (* "=" *) token env v1 in
            let v2 = map_expression env v2 in
            v2)
     | None -> None
   in
-  (id, e)
+  (id, e, arr_ty)
 
 let rec map_for_statement env v =
   match v with
@@ -651,26 +601,146 @@ let rec map_for_statement env v =
       For (tfor, ForEllipsis tellipsis, st) |> G.s
 
 and map_variable_declaration_statement (env : env)
-    ((v1, v2, v3, v4, v5) : CST.variable_declaration_statement) =
-  let ty = map_type_ env v1 in
-  let id, e = map_variable_initialization env v2 ty in
-  let v3TODO =
+    ((v1, v2, v3, v4) : CST.variable_declaration_statement) =
+  let basic_ty = (* "var" *) G.ty_builtin (str env v1) in
+  let declarations = 
+    (map_variable_declaration env v2 basic_ty) ::
     List_.map
-      (fun (v1, v2) ->
-        let _v1 = (* "," *) token env v1 in
-        let v2 = map_variable_initialization env v2 ty in
-        v2)
+      (fun (_, v2) -> map_variable_declaration env v2 basic_ty)
       v3
   in
-  let _v4 =
-    match v4 with
-    | Some tok -> Some ((* "," *) token env tok)
+  let sc = (* ";" *) token env v4 in
+  List.map (fun (id, e, arr_ty) ->
+    let ty = 
+      match arr_ty with
+      | None -> basic_ty
+      | Some x -> x
+    in
+    let ent = G.basic_entity id in
+    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+    (ent, def)
+  ) declarations
+
+and map_signal_declaration_statement (env : env)
+    ((v1, v2, v3, v4, v5, v6) : CST.signal_declaration_statement) =
+  let signal = (* "signal" *) str env v1 in
+  let visibility =
+    match v2 with
+    | Some x -> map_signal_visibility env x
+    | None -> []
+  in
+  let type_name = H2.name_of_ids (signal :: visibility) in
+  let basic_ty = G.TyN type_name |> G.t in
+  let tags_TODO =
+    match v3 with
+    | Some x -> Some (map_signal_tags env x)
     | None -> None
   in
-  let sc = (* ";" *) token env v5 in
-  let ent = G.basic_entity id in
-  let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
-  (ent, def)
+  let declarations = 
+    (map_signal_declaration env v4 basic_ty) ::
+    List_.map
+      (fun (_, v2) -> map_signal_declaration env v2 basic_ty)
+      v5
+  in
+  let sc = (* ";" *) token env v6 in
+  List.map (fun (id, e, arr_ty) ->
+    let ty = 
+      match arr_ty with
+      | None -> basic_ty
+      | Some x -> x
+    in
+    let ent = G.basic_entity id in
+    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+    (ent, def)
+  ) declarations
+
+and map_signal_declaration (env : env) ((v1, v2, v3) : CST.signal_declaration) (ty: type_) =
+  let id =
+    (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> left_strip_space
+  in
+  let arr_ty =
+    match v2 with
+    | Some x -> Some (map_array_type env x ty)
+    | None -> None
+  in
+  let e =
+    match v3 with
+    | Some (v1, v2) -> 
+        Some 
+          (let v1 =
+            match v1 with
+              | `LTEQEQ tok -> (* "<==" *) token env tok
+              | `LTDASHDASH tok -> (* "<--" *) token env tok
+        in
+        let v2 = map_expression env v2 in
+        v2
+      )
+    | None -> None
+  in
+  (id, e, arr_ty)
+
+and map_component_declaration_statement (env : env)
+    ((v1, v2, v3, v4) : CST.component_declaration_statement) =
+  let basic_ty = (* "component" *) G.ty_builtin (str env v1) in
+  let declarations = 
+    (map_component_declaration env v2 basic_ty) ::
+    List_.map
+      (fun (_, v2) -> map_component_declaration env v2 basic_ty)
+      v3
+  in
+  let sc = (* ";" *) token env v4 in
+  List.map (fun (id, e, arr_ty) ->
+    let ty = 
+      match arr_ty with
+      | None -> basic_ty
+      | Some x -> x
+    in
+    let ent = G.basic_entity id in
+    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+    (ent, def)
+  ) declarations
+
+and map_component_ellipsis (env : env) (x : CST.anon_choice_ellips_51e2204) =
+  match x with
+    | `Ellips tok -> G.Ellipsis (token env tok) |> G.e
+    | `Deep_ellips x -> map_deep_ellipsis env x |> G.e
+
+and map_component_declaration (env : env) (x : CST.component_declaration) ty =
+  match x with
+    | `Id_opt_array_type_opt_EQ_call_exp (v1, v2, v3) ->
+      let id = (* identifier *) str env v1 in
+      let arr_ty =
+        match v2 with
+        | Some x -> Some (map_array_type env x ty)
+        | None -> None
+      in
+      let e =
+        match v3 with
+        | Some (v1, v2) ->
+            Some
+              (let v1 = (* "=" *) token env v1 in
+               let v2 = map_call_expression env v2 in
+               v2)
+        | None -> None
+      in
+      (id, e, arr_ty)
+    | `Id_opt_array_type_opt_EQ_choice_ellips (v1, v2, v3) ->
+      let id = (* identifier *) str env v1 in
+      let arr_ty =
+        match v2 with
+        | Some x -> Some (map_array_type env x ty)
+        | None -> None
+      in
+      let e =
+        match v3 with
+        | Some (v1, v2) ->
+            Some
+              (let v1 = (* "=" *) token env v1 in
+               let v2 = map_component_ellipsis env v2 in
+               v2)
+        | None -> None
+      in
+      (id, e, arr_ty)
 
 and map_statement (env : env) (x : CST.statement) =
   match x with
@@ -708,11 +778,17 @@ and map_statement (env : env) (x : CST.statement) =
       let st = map_statement env v5 in
       While (twhile, Cond cond, st) |> G.s
   | `Var_decl_stmt x ->
-      let ent, vdef = map_variable_declaration_statement env x in
-      DefStmt (ent, VarDef vdef) |> G.s
+      let defs = map_variable_declaration_statement env x in
+      G.ss (List.map (fun (ent, vdef) -> DefStmt (ent, VarDef vdef) |> G.s) defs)
   | `Exp_stmt x ->
       let e, sc = map_expression_statement env x in
       ExprStmt (e, sc) |> G.s
+  | `Signal_decl_stmt x -> 
+      let defs = map_signal_declaration_statement env x in
+      G.ss (List.map (fun (ent, vdef) -> DefStmt (ent, VarDef vdef) |> G.s) defs)
+  | `Comp_decl_stmt x -> 
+      let defs = map_component_declaration_statement env x in
+      G.ss (List.map (fun (ent, vdef) -> DefStmt (ent, VarDef vdef) |> G.s) defs)
 
 let map_function_body (env : env) ((v1, v2, v3) : CST.function_body) :
     function_body =
@@ -734,7 +810,7 @@ let map_template_type (env : env) (x : CST.template_type) =
   | `Para tok -> (* "parallel" *) G.OtherAttribute (str env tok, [])
 
 let map_main_component_public_signals (env : env)
-    ((v1, v2, v3, v4, v5, v6, v7, v8) : CST.main_component_public_signals) =
+    ((v1, v2, v3, v4, v5, v6, v7) : CST.main_component_public_signals) =
   let v1 = (* "{" *) token env v1 in
   let v2 = (* "public" *) token env v2 in
   let v3 = (* "[" *) token env v3 in
@@ -748,14 +824,42 @@ let map_main_component_public_signals (env : env)
            v2)
          v5
   in
-  let _v6 =
-    match v6 with
-    | Some tok -> Some ((* "," *) token env tok)
-    | None -> None
-  in
-  let v7 = (* "]" *) token env v7 in
-  let v8 = (* "}" *) token env v8 in
-  (v3, params, v7)
+  let v6 = (* "]" *) token env v6 in
+  let v7 = (* "}" *) token env v7 in
+  (v3, params, v6)
+
+let map_main_component_definition (env : env) (x : CST.main_component_definition) =
+  match x with
+    | `Comp_main_opt_main_comp_public_signals_EQ_call_exp_semi (v1, v2, v3, v4, v5, v6) ->
+      let v1 = (* "component" *) str env v1 in
+      let id = (* "main" *) str env v2 in
+      let _paramsTODO =
+        match v3 with
+        | Some x -> map_main_component_public_signals env x
+        | None -> (fake "", [], fake "")
+      in
+      let v4 = (* "=" *) token env v4 in
+      let ty = G.ty_builtin v1 in
+      let vinit = map_call_expression env v5 in
+      let sc = (* ";" *) token env v6 in
+      let ent = G.basic_entity id in
+      let def = { vinit = Some vinit; vtype = Some ty; vtok = Some sc } in
+      (ent, VarDef def)
+    | `Comp_main_opt_main_comp_public_signals_EQ_choice_ellips_semi (v1, v2, v3, v4, v5, v6) ->
+      let v1 = (* "component" *) str env v1 in
+      let id = (* "main" *) str env v2 in
+      let _paramsTODO =
+        match v3 with
+        | Some x -> map_main_component_public_signals env x
+        | None -> (fake "", [], fake "")
+      in
+      let v4 = (* "=" *) token env v4 in
+      let ty = G.ty_builtin v1 in
+      let vinit = map_component_ellipsis env v5 in
+      let sc = (* ";" *) token env v6 in
+      let ent = G.basic_entity id in
+      let def = { vinit = Some vinit; vtype = Some ty; vtok = Some sc } in
+      (ent, VarDef def)
 
 let map_definition (env : env) (x : CST.definition) =
   match x with
@@ -788,21 +892,7 @@ let map_definition (env : env) (x : CST.definition) =
         { fkind = (Function, tfunc); fparams = params; frettype = None; fbody }
       in
       (ent, FuncDef def)
-  | `Main_comp_defi (v1, v2, v3, v4, v5, v6) ->
-      let v1 = (* "component" *) str env v1 in
-      let id = (* "main" *) str env v2 in
-      let v4 = (* "=" *) token env v4 in
-      let _paramsTODO =
-        match v3 with
-        | Some x -> map_main_component_public_signals env x
-        | None -> (fake "", [], fake "")
-      in
-      let ty = G.ty_builtin v1 in
-      let vinit = map_call_expression env v5 in
-      let sc = (* ";" *) token env v6 in
-      let ent = G.basic_entity id in
-      let def = { vinit = Some vinit; vtype = Some ty; vtok = Some sc } in
-      (ent, VarDef def)
+  | `Main_comp_defi x -> map_main_component_definition env x
 
 let map_source_unit (env : env) (x : CST.source_unit) : item list =
   match x with
