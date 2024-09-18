@@ -49,6 +49,10 @@ let map_string_immediate_elt_inside_quote (env : env)
     (tok : CST.string_immediate_elt_inside_quote) =
   (* pattern "[^'\\\\\\n]+|\\\\\\r?\\n" *) token env tok
 
+(*****************************************************************************)
+(* Directives *)
+(*****************************************************************************)
+
 let map_circom_version (env : env) (tok : CST.circom_version) =
   (* pattern "\"?\\.? ?(\\d|\\*\
      )+(\\. ?(\\d|\\*\
@@ -126,35 +130,11 @@ let map_directive (env : env) (x : CST.directive) =
 
       [ ImportAll (timport, FileName path, fake "") |> G.d ]
 
-let map_parameter (env : env) (x : CST.parameter) =
-  match x with
-  | `Id tok ->
-      let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
-      G.Param (G.param_of_id id)
-  | `Ellips tok -> G.ParamEllipsis (token env tok)
+(*****************************************************************************)
+(* Expressions *)
+(*****************************************************************************)
 
-let map_parameter_list (env : env) ((v1, v2, v3) : CST.parameter_list) :
-    parameters =
-  let lp = (* "(" *) token env v1 in
-  let params =
-    match v2 with
-    | Some (v1, v2) ->
-        let v1 = map_parameter env v1 in
-        let v2 =
-          List_.map
-            (fun (v1, v2) ->
-              let _v1 = (* "," *) token env v1 in
-              let v2 = map_parameter env v2 in
-              v2)
-            v2
-        in v1 :: v2
-    | None -> []
-  in
-  let rp = (* ")" *) token env v3 in
-  (lp, params, rp)
-
-let rec map_anon_choice_id_3723479 (env : env) (x : CST.anon_choice_id_3723479)
-    =
+let rec map_anon_choice_id_3723479 (env : env) (x : CST.anon_choice_id_3723479) =
   match x with
   | `Id tok ->
       let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
@@ -397,15 +377,15 @@ and map_argument_list (env : env) ((v1, v2) : CST.argument_list) =
   in
   arg1 :: other_args
 
-  and map_anonymous_inputs (env : env) ((v1, v2, v3) : CST.anonymous_inputs) =
-    let _lb = (* "(" *) token env v1 in
-    let args_list =
-      match v2 with
+and map_anonymous_inputs (env : env) ((v1, v2, v3) : CST.anonymous_inputs) =
+  let _lb = (* "(" *) token env v1 in
+  let args_list =
+    match v2 with
       | Some x -> map_argument_list env x
       | None -> []
-    in
-    let _rb = (* ")" *) token env v3 in
-    List.map (fun arg -> G.Ar arg) args_list
+  in
+  let _rb = (* ")" *) token env v3 in
+  List.map (fun arg -> G.Ar arg) args_list
 
 and map_array_expression (env : env) ((v1, v2, v3, v4) : CST.array_expression) =
   let lb = (* "[" *) token env v1 in
@@ -490,25 +470,15 @@ and map_expression (env : env) (x : CST.expression) =
       let r = token env v3 in
       DeepEllipsis (l, e, r) |> G.e
 
-let map_signal_tags (env : env) ((v1, v2, v3, v4) : CST.signal_tags) =
-  let lb = (* "{" *) token env v1 in
-  let tag1 = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) token env v2 in
-  let other_tags =
-    List_.map
-      (fun (v1, v2) ->
-        let v1 = (* "," *) token env v1 in
-        let v2 = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) token env v2 in
-        v2)
-      v3
-  in
-  let rb = (* "}" *) token env v4 in
-  tag1 :: other_tags
-
 let map_deep_ellipsis (env : env) ((v1, v2, v3) : CST.deep_ellipsis) =
   let l = (* "<..." *) token env v1 in
   let e = map_expression env v2 in
   let r = (* "...>" *) token env v3 in
   DeepEllipsis (l, e, r)
+
+(*****************************************************************************)
+(* Statements *)
+(*****************************************************************************)
 
 let map_array_type (env : env) (xs : CST.array_type) (ty : type_) =
   List.fold_right
@@ -519,28 +489,6 @@ let map_array_type (env : env) (xs : CST.array_type) (ty : type_) =
       TyArray ((lb, Some eopt, rb), acc_ty) |> G.t)
     xs
     ty
-
-
-let map_variable_declaration (env : env)
-    ((v1, v2, v3) : CST.variable_declaration) ty =
-  let id =
-    (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> left_strip_space
-  in
-  let arr_ty =
-    match v2 with
-    | Some x -> Some (map_array_type env x ty)
-    | None -> None
-  in
-  let e =
-    match v3 with
-    | Some (v1, v2) ->
-        Some
-          (let v1 = (* "=" *) token env v1 in
-           let v2 = map_expression env v2 in
-           v2)
-    | None -> None
-  in
-  (id, e, arr_ty)
 
 let rec map_for_statement env v =
   match v with
@@ -606,6 +554,26 @@ and map_variable_declaration_statement (env : env)
     (ent, def)
   )
 
+and map_variable_declaration (env : env)
+    ((v1, v2, v3) : CST.variable_declaration) ty =
+  let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> left_strip_space
+  in
+  let arr_ty =
+    match v2 with
+    | Some x -> Some (map_array_type env x ty)
+    | None -> None
+  in
+  let e =
+    match v3 with
+    | Some (v1, v2) ->
+        Some
+          (let v1 = (* "=" *) token env v1 in
+           let v2 = map_expression env v2 in
+           v2)
+    | None -> None
+  in
+  (id, e, arr_ty)
+
 and map_signal_declaration_statement (env : env)
     ((v1, v2, v3, v4, v5, v6) : CST.signal_declaration_statement) =
   let signal = (* "signal" *) str env v1 in
@@ -660,6 +628,20 @@ and map_signal_declaration (env : env) ((v1, v2, v3) : CST.signal_declaration) (
     | None -> None
   in
   (id, e, arr_ty)
+
+and map_signal_tags (env : env) ((v1, v2, v3, v4) : CST.signal_tags) =
+  let lb = (* "{" *) token env v1 in
+  let tag1 = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) token env v2 in
+  let other_tags =
+    List_.map
+      (fun (v1, v2) ->
+        let v1 = (* "," *) token env v1 in
+        let v2 = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) token env v2 in
+        v2)
+      v3
+  in
+  let rb = (* "}" *) token env v4 in
+  tag1 :: other_tags
 
 and map_component_declaration_statement (env : env)
     ((v1, v2, v3, v4) : CST.component_declaration_statement) =
@@ -771,6 +753,10 @@ and map_statement (env : env) (x : CST.statement) =
       let defs = map_component_declaration_statement env x in
       G.Block (_fb (defs |> List.map (fun (ent, def) -> DefStmt (ent, VarDef def) |> G.s))) |> G.s
 
+(*****************************************************************************)
+(* Definitions *)
+(*****************************************************************************)
+
 let map_function_body (env : env) ((v1, v2, v3) : CST.function_body) :
     function_body =
   let lb = (* "{" *) token env v1 in
@@ -789,6 +775,32 @@ let map_template_type (env : env) (x : CST.template_type) =
   match x with
   | `Custom tok -> (* "custom" *) G.OtherAttribute (str env tok, [])
   | `Para tok -> (* "parallel" *) G.OtherAttribute (str env tok, [])
+
+let map_parameter (env : env) (x : CST.parameter) =
+  match x with
+  | `Id tok ->
+      let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
+      G.Param (G.param_of_id id)
+  | `Ellips tok -> G.ParamEllipsis (token env tok)
+
+let map_parameter_list (env : env) ((v1, v2, v3) : CST.parameter_list) =
+  let lp = (* "(" *) token env v1 in
+  let params =
+    match v2 with
+    | Some (v1, v2) ->
+        let v1 = map_parameter env v1 in
+        let v2 =
+          List_.map
+            (fun (v1, v2) ->
+              let _v1 = (* "," *) token env v1 in
+              let v2 = map_parameter env v2 in
+              v2)
+            v2
+        in v1 :: v2
+    | None -> []
+  in
+  let rp = (* ")" *) token env v3 in
+  (lp, params, rp)
 
 let map_main_component_public_signals (env : env)
     ((v1, v2, v3, v4, v5, v6, v7) : CST.main_component_public_signals) =
@@ -928,7 +940,6 @@ let parse file =
           xs
       | _ -> failwith "not a program")
 
-(* todo: special mode to convert Ellipsis in the right construct! *)
 let parse_pattern str =
   H.wrap_parser
     (fun () -> Tree_sitter_circom.Parse.string str)
