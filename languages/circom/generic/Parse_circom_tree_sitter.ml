@@ -369,7 +369,7 @@ and map_call_expression (env : env)
   in
   
   let rb = (* ")" *) token env v5 in
-  let v6TODO =
+  let anonymous_inputs =
     match v6 with
     | Some x -> map_anonymous_inputs env x
     | None -> []
@@ -382,8 +382,8 @@ and map_call_expression (env : env)
     in
     (lb, arguments, rb) 
   in
-  G.Call (id, args) |> G.e
-(* G.OtherExpr (("Call", v2), [Tk v2; Tk v1; G.Args v4; G.Args v6 ]) |> G.e *)
+  G.OtherExpr (("CircomCallWithAnonymousInputs", G.fake ""), 
+               [G.E (G.Call (id, args) |> G.e); G.Anys anonymous_inputs]) |> G.e
 
 and map_argument_list (env : env) ((v1, v2) : CST.argument_list) =
   let arg1 = map_expression env v1 |> G.arg in
@@ -397,15 +397,15 @@ and map_argument_list (env : env) ((v1, v2) : CST.argument_list) =
   in
   arg1 :: other_args
 
-and map_anonymous_inputs (env : env) ((v1, v2, v3) : CST.anonymous_inputs) =
-  let _lb = (* "(" *) token env v1 in
-  let args_list =
-    match v2 with
-    | Some x -> map_argument_list env x
-    | None -> []
-  in
-  let _rb = (* ")" *) token env v3 in
-  args_list
+  and map_anonymous_inputs (env : env) ((v1, v2, v3) : CST.anonymous_inputs) =
+    let _lb = (* "(" *) token env v1 in
+    let args_list =
+      match v2 with
+      | Some x -> map_argument_list env x
+      | None -> []
+    in
+    let _rb = (* ")" *) token env v3 in
+    List.map (fun arg -> G.Ar arg) args_list
 
 and map_array_expression (env : env) ((v1, v2, v3, v4) : CST.array_expression) =
   let lb = (* "[" *) token env v1 in
