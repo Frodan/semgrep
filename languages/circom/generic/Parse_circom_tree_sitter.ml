@@ -15,10 +15,6 @@ let token = H.token
 let str = H.str
 let _fb = Tok.unsafe_fake_bracket
 
-(* let fake s = Tok.unsafe_fake_tok s *)
-
-(*****************************************************************************)
-(* Boilerplate converter *)
 (*****************************************************************************)
 (* This was started by copying from semgrep-circom/lib/Boilerplate.ml *)
 
@@ -39,7 +35,8 @@ let map_signal_visibility (env : env) (x : CST.signal_visibility) =
 let map_identifier (env : env) (tok : CST.identifier) =
   (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok
 
-let map_int_literal (env : env) (tok : CST.int_literal) = (* pattern \d+ *) str env tok
+let map_int_literal (env : env) (tok : CST.int_literal) = 
+  (* pattern \d+ *) str env tok
 
 let map_escape_sequence (env : env) (tok : CST.escape_sequence) =
   (* escape_sequence *) token env tok
@@ -131,21 +128,10 @@ let map_directive (env : env) (x : CST.directive) =
 
 let map_parameter (env : env) (x : CST.parameter) =
   match x with
-  | `Id v1 ->
-      let name =
-        (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env v1 |> left_strip_space
-      in
-      let param =
-        {
-          G.pname = Some name;
-          G.ptype = None;
-          G.pdefault = None;
-          G.pattrs = [];
-          G.pinfo = G.empty_id_info ();
-        }
-      in
-      G.Param param
-  | `Ellips tok -> ParamEllipsis ((* "..." *) token env tok)
+  | `Id tok ->
+      let id = (* pattern [a-zA-Z$_][a-zA-Z0-9$_]* *) str env tok in
+      G.Param (G.param_of_id id)
+  | `Ellips tok -> G.ParamEllipsis (token env tok)
 
 let map_parameter_list (env : env) ((v1, v2, v3) : CST.parameter_list) :
     parameters =
@@ -516,7 +502,7 @@ let map_signal_tags (env : env) ((v1, v2, v3, v4) : CST.signal_tags) =
       v3
   in
   let rb = (* "}" *) token env v4 in
-  (lb, tag1 :: other_tags, rb)
+  tag1 :: other_tags
 
 let map_deep_ellipsis (env : env) ((v1, v2, v3) : CST.deep_ellipsis) =
   let l = (* "<..." *) token env v1 in
@@ -565,8 +551,8 @@ let rec map_for_statement env v =
       let init =
         match v3 with
         | `Var_decl_stmt x ->
-            let ent, vdef = map_variable_declaration_statement env x in
-            [ ForInitVar (ent, vdef) ]
+            let var_defs = map_variable_declaration_statement env x in
+            List.map (fun (ent, vdef) -> ForInitVar (ent, vdef)) var_defs
         | `Exp_stmt x ->
             let e, _sc = map_expression_statement env x in
             [ ForInitExpr e ]
@@ -603,24 +589,22 @@ let rec map_for_statement env v =
 and map_variable_declaration_statement (env : env)
     ((v1, v2, v3, v4) : CST.variable_declaration_statement) =
   let basic_ty = (* "var" *) G.ty_builtin (str env v1) in
-  let id, e, arr_ty = map_variable_declaration env v2 basic_ty in
-  let v3TODO =
+  let declarations = map_variable_declaration env v2 basic_ty :: 
     List_.map
-      (fun (v1, v2) ->
-        let _v1 = (* "," *) token env v1 in
-        let v2 = map_variable_declaration env v2 basic_ty in
-        v2)
+      (fun (_, v2) -> map_variable_declaration env v2 basic_ty)
       v3
   in
-  let ty = 
-    match arr_ty with
-    | None -> basic_ty
-    | Some x -> x
-  in
   let sc = (* ";" *) token env v4 in
-  let ent = G.basic_entity id in
-  let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
-  (ent, def)
+  declarations |> List.map (fun (id, e, arr_ty) ->
+    let ty = 
+      match arr_ty with
+      | None -> basic_ty
+      | Some x -> x
+    in
+    let ent = G.basic_entity id in
+    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+    (ent, def)
+  )
 
 and map_signal_declaration_statement (env : env)
     ((v1, v2, v3, v4, v5, v6) : CST.signal_declaration_statement) =
@@ -631,31 +615,28 @@ and map_signal_declaration_statement (env : env)
     | None -> []
   in
   let type_name = H2.name_of_ids (signal :: visibility) in
-  let basic_ty = G.TyN type_name |> G.t
-  in
-  let tags_TODO =
+  let basic_ty = G.TyN type_name |> G.t in
+  let tags =
     match v3 with
-    | Some x -> Some (map_signal_tags env x)
-    | None -> None
+    | Some x -> map_signal_tags env x
+    | None -> []
   in
-  let id, e, arr_ty = map_signal_declaration env v4 basic_ty in
-  let ty = 
-    match arr_ty with
-    | None -> basic_ty
-    | Some x -> x
-  in
-  let v5TODO =
+  let declarations = map_signal_declaration env v4 basic_ty ::
     List_.map
-      (fun (v1, v2) ->
-        let _v1 = (* "," *) token env v1 in
-        let v2 = map_signal_declaration env v2 basic_ty in
-        v2)
+      (fun (_, v2) -> map_signal_declaration env v2 basic_ty)
       v5
   in
   let sc = (* ";" *) token env v6 in
-  let ent = G.basic_entity id in
-  let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
-  (ent, def)
+  declarations |> List.map (fun (id, e, arr_ty) ->
+    let ty = 
+      match arr_ty with
+      | None -> basic_ty
+      | Some x -> x
+    in
+    let ent = G.basic_entity id ~attrs:(List.map (fun tag -> G.OtherAttribute (("tag", tag), [])) tags) in
+    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+    (ent, def)
+  )
 
 and map_signal_declaration (env : env) ((v1, v2, v3) : CST.signal_declaration) (ty: type_) =
   let id =
@@ -685,24 +666,22 @@ and map_signal_declaration (env : env) ((v1, v2, v3) : CST.signal_declaration) (
 and map_component_declaration_statement (env : env)
     ((v1, v2, v3, v4) : CST.component_declaration_statement) =
   let basic_ty = (* "component" *) G.ty_builtin (str env v1) in
-  let id, e, arr_ty = map_component_declaration env v2 basic_ty in
-  let ty = 
-    match arr_ty with
-    | None -> basic_ty
-    | Some x -> x
-  in
-  let v3TODO =
+  let declarations = map_component_declaration env v2 basic_ty ::
     List_.map
-      (fun (v1, v2) ->
-        let _v1 = (* "," *) token env v1 in
-        let v2 = map_component_declaration env v2 basic_ty in
-        v2)
+      (fun (_, v2) -> map_component_declaration env v2 basic_ty)
       v3
   in
   let sc = (* ";" *) token env v4 in
-  let ent = G.basic_entity id in
-  let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
-  (ent, def)
+  declarations |> List.map (fun (id, e, arr_ty) ->
+    let ty = 
+      match arr_ty with
+      | None -> basic_ty
+      | Some x -> x
+    in
+    let ent = G.basic_entity id in
+    let def = { vtype = Some ty; vinit = e; vtok = Some sc } in
+    (ent, def)
+  )
 
 and map_component_ellipsis (env : env) (x : CST.anon_choice_ellips_51e2204) =
   match x with
@@ -781,18 +760,18 @@ and map_statement (env : env) (x : CST.statement) =
       let _rp = (* ")" *) token env v4 in
       let st = map_statement env v5 in
       While (twhile, Cond cond, st) |> G.s
-  | `Var_decl_stmt x ->
-      let ent, vdef = map_variable_declaration_statement env x in
-      DefStmt (ent, VarDef vdef) |> G.s
   | `Exp_stmt x ->
       let e, sc = map_expression_statement env x in
       ExprStmt (e, sc) |> G.s
+  | `Var_decl_stmt x ->
+      let defs = map_variable_declaration_statement env x in
+      G.Block (_fb (defs |> List.map (fun (ent, def) -> DefStmt (ent, VarDef def) |> G.s))) |> G.s
   | `Signal_decl_stmt x -> 
-      let ent, vdef = map_signal_declaration_statement env x in
-      DefStmt (ent, VarDef vdef) |> G.s
+      let defs = map_signal_declaration_statement env x in
+      G.Block (_fb (defs |> List.map (fun (ent, def) -> DefStmt (ent, VarDef def) |> G.s))) |> G.s
   | `Comp_decl_stmt x -> 
-      let ent, vdef = map_component_declaration_statement env x in
-      DefStmt (ent, VarDef vdef) |> G.s
+      let defs = map_component_declaration_statement env x in
+      G.Block (_fb (defs |> List.map (fun (ent, def) -> DefStmt (ent, VarDef def) |> G.s))) |> G.s
 
 let map_function_body (env : env) ((v1, v2, v3) : CST.function_body) :
     function_body =
@@ -815,55 +794,73 @@ let map_template_type (env : env) (x : CST.template_type) =
 
 let map_main_component_public_signals (env : env)
     ((v1, v2, v3, v4, v5, v6, v7) : CST.main_component_public_signals) =
-  let v1 = (* "{" *) token env v1 in
-  let v2 = (* "public" *) token env v2 in
-  let v3 = (* "[" *) token env v3 in
+  let _v1 = (* "{" *) token env v1 in
+  let _v2 = (* "public" *) token env v2 in
+  let lb = (* "[" *) token env v3 in
   let first_param = map_parameter env v4 in
   let params =
     first_param
     :: List.map
          (fun (v1, v2) ->
-           let v1 = (* "," *) token env v1 in
+           let _v1 = (* "," *) token env v1 in
            let v2 = map_parameter env v2 in
            v2)
          v5
   in
-  let v6 = (* "]" *) token env v6 in
-  let v7 = (* "}" *) token env v7 in
-  (v3, params, v6)
+  let rb = (* "]" *) token env v6 in
+  let _v7 = (* "}" *) token env v7 in
+  (lb, params, rb)
+
+let parameter_to_type_parameter (param : G.parameter) : G.type_parameter =
+  match param with
+  | G.Param p -> 
+      G.TP {
+        tp_id = (match p.pname with Some id -> id | None -> ("", G.fake ""));
+        tp_attrs = p.pattrs;
+        tp_bounds = (match p.ptype with Some t -> [t] | None -> []);
+        tp_default = None;
+        tp_variance = None;
+      }
+  | _ -> G.TParamEllipsis (G.fake "...")  (* Default case for other parameter types *)
 
 let map_main_component_definition (env : env) (x : CST.main_component_definition) =
   match x with
     | `Comp_main_opt_main_comp_public_signals_EQ_call_exp_semi (v1, v2, v3, v4, v5, v6) ->
-      let v1 = (* "component" *) str env v1 in
+      let ty_name = (* "component" *) str env v1 in
       let id = (* "main" *) str env v2 in
-      let _paramsTODO =
+      let public_inputs =
         match v3 with
-        | Some x -> map_main_component_public_signals env x
-        | None -> (fake "", [], fake "")
+        | Some x -> 
+            let (l, params, r) = map_main_component_public_signals env x in
+            let type_params = List.map parameter_to_type_parameter params in
+            Some (l, type_params, r)
+        | None -> None
       in
-      let v4 = (* "=" *) token env v4 in
-      let ty = G.ty_builtin v1 in
+      let _v4 = (* "=" *) token env v4 in
+      let ty = G.ty_builtin ty_name in
       let vinit = map_call_expression env v5 in
       let sc = (* ";" *) token env v6 in
-      let ent = G.basic_entity id in
-      let def = { vinit = Some vinit; vtype = Some ty; vtok = Some sc } in
-      (ent, VarDef def)
+      let ent = G.basic_entity id ~attrs:[] ~tparams:(public_inputs) in
+      let def = { G.vinit = Some vinit; G.vtype = Some ty; G.vtok = Some sc } in
+      (ent, G.VarDef def)
     | `Comp_main_opt_main_comp_public_signals_EQ_choice_ellips_semi (v1, v2, v3, v4, v5, v6) ->
-      let v1 = (* "component" *) str env v1 in
+      let ty_name = (* "component" *) str env v1 in
       let id = (* "main" *) str env v2 in
-      let _paramsTODO =
+      let public_inputs =
         match v3 with
-        | Some x -> map_main_component_public_signals env x
-        | None -> (fake "", [], fake "")
+        | Some x -> 
+            let (l, params, r) = map_main_component_public_signals env x in
+            let type_params = List.map parameter_to_type_parameter params in
+            Some (l, type_params, r)
+        | None -> None
       in
-      let v4 = (* "=" *) token env v4 in
-      let ty = G.ty_builtin v1 in
+      let _v4 = (* "=" *) token env v4 in
+      let ty = G.ty_builtin ty_name in
       let vinit = map_component_ellipsis env v5 in
       let sc = (* ";" *) token env v6 in
-      let ent = G.basic_entity id in
-      let def = { vinit = Some vinit; vtype = Some ty; vtok = Some sc } in
-      (ent, VarDef def)
+      let ent = G.basic_entity id ~attrs:[] ~tparams:(public_inputs) in
+      let def = { G.vinit = Some vinit; G.vtype = Some ty; G.vtok = Some sc } in
+      (ent, G.VarDef def)
 
 let map_definition (env : env) (x : CST.definition) =
   match x with
