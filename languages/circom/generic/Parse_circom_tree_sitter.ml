@@ -651,14 +651,12 @@ and map_signal_declaration (env : env) ((v1, v2, v3) : CST.signal_declaration) (
     match v3 with
     | Some (v1, v2) -> 
         Some 
-          (let v1 =
-            match v1 with
-              | `LTEQEQ tok -> (* "<==" *) token env tok
-              | `LTDASHDASH tok -> (* "<--" *) token env tok
-        in
-        let v2 = map_expression env v2 in
-        v2
-      )
+          (let op_tok, op = match v1 with
+             | `LTEQEQ tok -> let t = token env tok in (t, (G.LDA, t))
+             | `LTDASHDASH tok -> let t = token env tok in (t, (G.LSA, t))
+           in
+           let expr = map_expression env v2 in
+           G.AssignOp (G.N (G.Id (id, G.empty_id_info ())) |> G.e, op, expr) |> G.e)
     | None -> None
   in
   (id, e, arr_ty)
